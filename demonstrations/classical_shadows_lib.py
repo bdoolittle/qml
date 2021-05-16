@@ -3,10 +3,10 @@ import numpy as np
 
 
 def calculate_classical_shadow(circuit_template, params, num_shadows: int, num_qubits: int) -> np.ndarray:
-    unitary_ensemble = [qml.Identity, qml.PauliX, qml.PauliY, qml.PauliZ]
+    unitary_ensemble = [qml.PauliX, qml.PauliY, qml.PauliZ]
     # each shadow is one shot, so we set this parameter in the qml.device
     # sample random pauli unitaries uniformly, where 1,2,3 = X,Y,Z
-    unitary_ids = np.random.randint(1, 4, size=(num_shadows, num_qubits))
+    unitary_ids = np.random.randint(0, 3, size=(num_shadows, num_qubits))
     outcomes = np.zeros((num_shadows, num_qubits))
     for ns in range(num_shadows):
         # for each shadow, add a random Clifford observable at each location
@@ -35,7 +35,7 @@ def estimate_shadow_obervable(shadows, observable):
 
         sum_product += product
         cnt_match += 1
-    if cnt_match==0:
+    if cnt_match == 0:
         return 0
     else:
         return sum_product / cnt_match
@@ -58,8 +58,9 @@ def snapshot_state(b_list, obs_list):
 
     paulis = [
         qml.Hadamard(0).matrix,
-        np.array([[1, 0],
-                  [0, -1j]], dtype=np.complex) @ qml.Hadamard(0).matrix,
+
+        qml.Hadamard(0).matrix @ np.array([[1, 0],
+                                           [0, -1j]], dtype=np.complex),
         qml.Identity(0).matrix
     ]
 
@@ -69,30 +70,28 @@ def snapshot_state(b_list, obs_list):
     rho_snapshot = [1]
     for i in range(num_qubits):
         state = zero_state if b_list[i] == 1 else one_state
-        U = paulis[obs_list[i]]
+        U = paulis[int(obs_list[i])]
 
-        local_rho = 3 * (U.conj().T @ state @ U) - paulis[0]
+        local_rho = 3 * (U.conj().T @ state @ U) - np.eye(2, 2)
 
         rho_snapshot = np.kron(rho_snapshot, local_rho)
 
     return rho_snapshot
 
 
-def shadow_state(shadow):
+def shadow_state_reconstruction(shadow):
     """
     Reconstruct a state approximation as an average over all snapshots in the shadow.
     """
 
     num_shadows = shadow.shape[0]
-    num_qubits = int(shadow.shape[1] / 2)
+    num_qubits = shadow.shape[1] // 2
 
     b_lists = shadow[:, 0:num_qubits]
     obs_lists = shadow[:, num_qubits:2 * num_qubits]
-
     # state approximated from snapshot average
-    shadow_rho = np.zeros((2 ** num_qubits, 2 ** num_qubits))
+    shadow_rho = np.zeros((2 ** num_qubits, 2 ** num_qubits), dtype=np.complex)
     for i in range(num_shadows):
-        snapshot = snapshot_state(b_lists[i], obs_lists[i])
-        shadow_rho = shadow_rho + snapshot
+        shadow_rho += snapshot_state(b_lists[i], obs_lists[i])
 
     return shadow_rho / num_shadows
