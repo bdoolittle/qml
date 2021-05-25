@@ -2,13 +2,27 @@ import pennylane as qml
 import numpy as np
 
 
-def calculate_classical_shadow(circuit_template, params, num_shadows: int, num_qubits: int) -> np.ndarray:
+def calculate_classical_shadow(circuit_template, params, shadow_size: int, num_qubits: int) -> np.ndarray:
+    """
+    Given a circuit, creates a collection of snapshots U^\dag|b><b| U with the stabilizer description.
+    
+    Args:
+        circuit_template: A Pennylane QNode.
+        params: Circuit parameters.
+        shadow_size: The number of snapshots in the shadow.
+        num_qubits: The number of qubits in the circuit.
+
+    Returns:
+        Numpy array containing the outcomes (0, 1) in the first `num_qubits` columns and the sampled Pauli's
+        (0,1,2=x,y,z) in the final `num_qubits` columns.
+
+    """
     unitary_ensemble = [qml.PauliX, qml.PauliY, qml.PauliZ]
     # each shadow is one shot, so we set this parameter in the qml.device
     # sample random pauli unitaries uniformly, where 1,2,3 = X,Y,Z
-    unitary_ids = np.random.randint(0, 3, size=(num_shadows, num_qubits))
-    outcomes = np.zeros((num_shadows, num_qubits))
-    for ns in range(num_shadows):
+    unitary_ids = np.random.randint(0, 3, size=(shadow_size, num_qubits))
+    outcomes = np.zeros((shadow_size, num_qubits))
+    for ns in range(shadow_size):
         # for each shadow, add a random Clifford observable at each location
         obs = [unitary_ensemble[int(unitary_ids[ns, i])](i) for i in range(num_qubits)]
         outcomes[ns, :] = circuit_template(params, observable=obs)
@@ -16,7 +30,23 @@ def calculate_classical_shadow(circuit_template, params, num_shadows: int, num_q
     return np.concatenate([outcomes, unitary_ids], axis=1)
 
 
-def estimate_shadow_obervable(shadows, observable):
+def estimate_shadow_obervable(shadows, observable) -> float:
+    """
+    Calculate the estimator E[O] = sum_i Tr{rho_i O} where rho_i is a snapshot in the shadow.
+
+    Args:
+        shadows: Numpy array containing the outcomes (0, 1) in the first `num_qubits` columns and the sampled Pauli's
+        (0,1,2=x,y,z) in the final `num_qubits` columns.
+        observable: Single PennyLane observable consisitng of single Pauli operators e.g. qml.PauliX(0) @ qml.PauliY(1)
+
+    Returns:
+        Scalar corresponding to the estimate of the observable.
+    """
+    map_name_to_int = {'PauliX': 0, 'PauliY': 1, 'PauliZ': 2}
+    if isinstance(observable, (qml.PauliX, qml.PauliY, qml.PauliZ)):
+        observable_as_list = [(map_name_to_int[observable.name], observable.wires[0])]
+    else:
+        observable_as_list = [(map_name_to_int[o.name], o.wires[0]) for o in observable.obs]
     num_qubits = shadows.shape[1] // 2
     sum_product, cnt_match = 0, 0
     # loop over the shadows:
@@ -24,7 +54,7 @@ def estimate_shadow_obervable(shadows, observable):
         not_match = 0
         product = 1
         # loop over all the paulis that we care about
-        for pauli_XYZ, position in observable:
+        for pauli_XYZ, position in observable_as_list:
             # if the pauli in our shadow does not match, we break and go to the next shadow
             if pauli_XYZ != single_measurement[position + num_qubits]:
                 not_match = 1
